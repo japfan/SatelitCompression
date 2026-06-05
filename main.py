@@ -10,7 +10,6 @@ try:
 except ImportError:
     winreg = None
 
-import customtkinter as ctk
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image, ImageTk, UnidentifiedImageError
