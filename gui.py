@@ -1,4 +1,4 @@
-"""Modern GUI for SVD-based satellite image processing using customtkinter."""
+"""Simple GUI for SVD-based satellite image processing using customtkinter."""
 from __future__ import annotations
 
 import queue
@@ -23,21 +23,20 @@ from main import (
     validate_image_path,
 )
 
-# Color tokens: tuples are (light, dark) as customtkinter expects
 COLORS = {
-    "bg":           ("#f1f5f9", "#0f172a"),
-    "card":         ("#ffffff", "#1e293b"),
-    "card_hover":   ("#f8fafc", "#243244"),
-    "text":         ("#0f172a", "#f1f5f9"),
-    "muted":        ("#64748b", "#94a3b8"),
-    "border":       ("#cbd5e1", "#334155"),
-    "accent":       ("#6366f1", "#6366f1"),
-    "accent_hover": ("#4f46e5", "#818cf8"),
+    "bg":           ("#f3f4f6", "#f3f4f6"),
+    "card":         ("#ffffff", "#ffffff"),
+    "card_hover":   ("#f9fafb", "#f9fafb"),
+    "text":         ("#111827", "#111827"),
+    "muted":        ("#4b5563", "#4b5563"),
+    "border":       ("#d1d5db", "#d1d5db"),
+    "accent":       ("#2563eb", "#2563eb"),
+    "accent_hover": ("#1d4ed8", "#1d4ed8"),
     "accent_fg":    ("#ffffff", "#ffffff"),
-    "entry_bg":     ("#ffffff", "#1e293b"),
-    "entry_border": ("#cbd5e1", "#475569"),
-    "preview_bg":   ("#e2e8f0", "#0f172a"),
-    "green":        ("#16a34a", "#4ade80"),
+    "entry_bg":     ("#ffffff", "#ffffff"),
+    "entry_border": ("#9ca3af", "#9ca3af"),
+    "preview_bg":   ("#e5e7eb", "#e5e7eb"),
+    "green":        ("#15803d", "#15803d"),
 }
 C = COLORS
 
@@ -53,7 +52,7 @@ class ZoomablePreview(ctk.CTkFrame):
     """Canvas-based image preview with scroll-to-zoom and drag-to-pan."""
 
     def __init__(self, master, placeholder_text: str = "", **kwargs):
-        super().__init__(master, corner_radius=10, **kwargs)
+        super().__init__(master, corner_radius=4, **kwargs)
         self._pil_image: Image.Image | None = None
         self._photo: ImageTk.PhotoImage | None = None
         self._scale = 1.0
@@ -64,7 +63,7 @@ class ZoomablePreview(ctk.CTkFrame):
         self._fitted = True
 
         bg = _resolve_color(C["preview_bg"])
-        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, cursor="hand2")
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, cursor="crosshair")
         self.canvas.pack(fill="both", expand=True, padx=2, pady=2)
 
         self.canvas.bind("<MouseWheel>", self._on_scroll)
@@ -167,9 +166,10 @@ class ZoomablePreview(ctk.CTkFrame):
 class SVDCompressorGUI:
     def __init__(self, root: ctk.CTk) -> None:
         self.root = root
-        self.root.title("SVD Satellite Image Processor")
-        self.root.geometry("1180x820")
-        self.root.minsize(960, 700)
+        self.root.title("Kompresi Citra Satelit SVD")
+        self.root.geometry("1080x760")
+        self.root.minsize(900, 650)
+        self.root.configure(fg_color=C["bg"])
 
         self.image_path: Path | None = None
         self._original_pil: Image.Image | None = None
@@ -194,7 +194,7 @@ class SVDCompressorGUI:
         self.k_var = tk.StringVar(value="50")
         self.unit_var = tk.StringVar(value="Nilai k")
         self.color_mode_var = tk.StringVar(value="Grayscale")
-        self.status_var = tk.StringVar(value="Pilih citra satelit, masukkan nilai k, lalu proses SVD.")
+        self.status_var = tk.StringVar(value="Pilih citra, masukkan nilai k, lalu klik Proses.")
 
         self._build_layout()
         self._poll_worker_queue()
@@ -205,54 +205,39 @@ class SVDCompressorGUI:
 
         # -- header
         header = ctk.CTkFrame(self.root, fg_color="transparent")
-        header.grid(row=0, column=0, padx=28, pady=(24, 8), sticky="ew")
+        header.grid(row=0, column=0, padx=18, pady=(16, 6), sticky="ew")
         header.grid_columnconfigure(0, weight=1)
 
-        title_row = ctk.CTkFrame(header, fg_color="transparent")
-        title_row.pack(fill="x")
-        title_row.grid_columnconfigure(0, weight=1)
-
         ctk.CTkLabel(
-            title_row, text="SVD Satellite Image Processor",
-            font=ctk.CTkFont(family="Segoe UI", size=26, weight="bold"),
+            header, text="Kompresi Citra Satelit dengan SVD",
+            font=ctk.CTkFont(family="Segoe UI", size=20, weight="bold"),
             text_color=C["text"],
-        ).grid(row=0, column=0, sticky="w")
-
-        self.theme_switch = ctk.CTkSwitch(
-            title_row, text="Dark", width=46,
-            command=self._toggle_theme,
-            progress_color=C["accent"], button_color=C["accent_fg"],
-            button_hover_color=("#e2e8f0", "#475569"), fg_color=C["border"],
-            font=ctk.CTkFont(family="Segoe UI", size=12),
-        )
-        self.theme_switch.grid(row=0, column=1, padx=(12, 0))
-        if ctk.get_appearance_mode() == "Dark":
-            self.theme_switch.select()
+        ).pack(anchor="w")
 
         ctk.CTkLabel(
             header,
-            text="Pengolahan citra satelit berbasis Singular Value Decomposition - pilihan k / persen, Grayscale / RGB, mendukung TIFF.",
-            font=ctk.CTkFont(family="Segoe UI", size=13),
+            text="Program sederhana untuk membandingkan citra asli dan hasil kompresi.",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
             text_color=C["muted"],
         ).pack(anchor="w", pady=(2, 0))
 
         # -- controls card
         controls = ctk.CTkFrame(
-            self.root, corner_radius=14,
+            self.root, corner_radius=4,
             fg_color=C["card"], border_color=C["border"], border_width=1,
         )
-        controls.grid(row=1, column=0, padx=28, pady=(4, 14), sticky="ew")
+        controls.grid(row=1, column=0, padx=18, pady=(4, 10), sticky="ew")
 
         inner = ctk.CTkFrame(controls, fg_color="transparent")
-        inner.pack(fill="x", padx=20, pady=18)
+        inner.pack(fill="x", padx=14, pady=12)
         inner.grid_columnconfigure(1, weight=1)
 
         # image picker row
         ctk.CTkButton(
-            inner, text="Pilih Citra", width=160, height=38,
-            corner_radius=10, fg_color=C["accent"], hover_color=C["accent_hover"],
+            inner, text="Pilih Citra", width=135, height=32,
+            corner_radius=4, fg_color=C["accent"], hover_color=C["accent_hover"],
             text_color=C["accent_fg"],
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=12),
             command=self.choose_image,
         ).grid(row=0, column=0, sticky="w")
 
@@ -260,7 +245,7 @@ class SVDCompressorGUI:
             inner, textvariable=self.path_var,
             font=ctk.CTkFont(family="Segoe UI", size=12),
             text_color=C["muted"], anchor="w",
-        ).grid(row=0, column=1, columnspan=5, padx=(14, 0), sticky="ew")
+        ).grid(row=0, column=1, columnspan=5, padx=(10, 0), sticky="ew")
 
         # labels row
         for col, txt in [(0, "Nilai SVD"), (1, "Satuan"), (2, "Kanal Citra")]:
@@ -273,8 +258,8 @@ class SVDCompressorGUI:
 
         # inputs row
         ctk.CTkEntry(
-            inner, textvariable=self.k_var, width=150, height=38,
-            corner_radius=8, border_color=C["entry_border"],
+            inner, textvariable=self.k_var, width=150, height=32,
+            corner_radius=4, border_color=C["entry_border"],
             fg_color=C["entry_bg"], text_color=C["text"],
             font=ctk.CTkFont(family="Segoe UI", size=13),
             placeholder_text="cth: 50 atau 10,30,50",
@@ -282,8 +267,8 @@ class SVDCompressorGUI:
 
         ctk.CTkOptionMenu(
             inner, variable=self.unit_var,
-            values=["Nilai k", "Persen"], width=130, height=38,
-            corner_radius=8, font=ctk.CTkFont(size=13),
+            values=["Nilai k", "Persen"], width=120, height=32,
+            corner_radius=4, font=ctk.CTkFont(size=12),
             fg_color=C["entry_bg"], button_color=C["accent"],
             button_hover_color=C["accent_hover"], text_color=C["text"],
             dropdown_fg_color=C["card"], dropdown_hover_color=C["accent"],
@@ -293,8 +278,8 @@ class SVDCompressorGUI:
 
         ctk.CTkOptionMenu(
             inner, variable=self.color_mode_var,
-            values=["Grayscale", "RGB"], width=130, height=38,
-            corner_radius=8, font=ctk.CTkFont(size=13),
+            values=["Grayscale", "RGB"], width=120, height=32,
+            corner_radius=4, font=ctk.CTkFont(size=12),
             fg_color=C["entry_bg"], button_color=C["accent"],
             button_hover_color=C["accent_hover"], text_color=C["text"],
             dropdown_fg_color=C["card"], dropdown_hover_color=C["accent"],
@@ -303,27 +288,27 @@ class SVDCompressorGUI:
         ).grid(row=2, column=2, padx=(14, 0), pady=(4, 0), sticky="w")
 
         self.compress_button = ctk.CTkButton(
-            inner, text="Kompres citra", width=130, height=38,
-            corner_radius=10, fg_color=C["accent"], hover_color=C["accent_hover"],
+            inner, text="Proses", width=105, height=32,
+            corner_radius=4, fg_color=C["accent"], hover_color=C["accent_hover"],
             text_color=C["accent_fg"],
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=12),
             command=self.compress_image,
         )
         self.compress_button.grid(row=2, column=3, padx=(20, 0), pady=(4, 0))
 
         self.save_button = ctk.CTkButton(
-            inner, text="Simpan Citra", width=140, height=38,
-            corner_radius=10, state="disabled",
+            inner, text="Simpan", width=105, height=32,
+            corner_radius=4, state="disabled",
             fg_color=C["border"], hover_color=C["card_hover"],
             text_color=C["text"],
-            font=ctk.CTkFont(family="Segoe UI", size=13),
+            font=ctk.CTkFont(family="Segoe UI", size=12),
             command=self.save_photo,
         )
         self.save_button.grid(row=2, column=4, padx=(10, 0), pady=(4, 0))
 
         # -- preview area
         preview_area = ctk.CTkFrame(self.root, fg_color="transparent")
-        preview_area.grid(row=2, column=0, padx=28, pady=(0, 8), sticky="nsew")
+        preview_area.grid(row=2, column=0, padx=18, pady=(0, 8), sticky="nsew")
         preview_area.grid_columnconfigure(0, weight=1)
         preview_area.grid_columnconfigure(1, weight=1)
         preview_area.grid_rowconfigure(0, weight=1)
@@ -333,7 +318,7 @@ class SVDCompressorGUI:
             (1, "Hasil Pengolahan SVD", "compressed_canvas", "compressed"),
         ]:
             card = ctk.CTkFrame(
-                preview_area, corner_radius=14,
+                preview_area, corner_radius=4,
                 fg_color=C["card"], border_color=C["border"], border_width=1,
             )
             card.grid(row=0, column=col,
@@ -347,15 +332,15 @@ class SVDCompressorGUI:
 
             ctk.CTkLabel(
                 hdr, text=title,
-                font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
+                font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
                 text_color=C["text"],
             ).grid(row=0, column=0, sticky="w")
 
             fullscreen_button = ctk.CTkButton(
-                hdr, text="⛶", width=32, height=28,
-                corner_radius=6, fg_color=C["border"], hover_color=C["accent"],
+                hdr, text="Lihat", width=52, height=26,
+                corner_radius=4, fg_color=C["border"], hover_color=C["card_hover"],
                 text_color=C["text"],
-                font=ctk.CTkFont(size=15),
+                font=ctk.CTkFont(size=11),
                 command=lambda w=which: self._open_fullscreen(w),
             )
             fullscreen_button.grid(row=0, column=1, sticky="e")
@@ -380,7 +365,7 @@ class SVDCompressorGUI:
 
         # -- stats section
         stats_outer = ctk.CTkFrame(self.root, fg_color="transparent")
-        stats_outer.grid(row=3, column=0, padx=28, pady=(0, 24), sticky="ew")
+        stats_outer.grid(row=3, column=0, padx=18, pady=(0, 16), sticky="ew")
         stats_outer.grid_columnconfigure(0, weight=1)
 
         stats_header = ctk.CTkFrame(stats_outer, fg_color="transparent")
@@ -388,8 +373,8 @@ class SVDCompressorGUI:
         stats_header.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
-            stats_header, text="Statistik",
-            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
+            stats_header, text="Hasil Perhitungan",
+            font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
             text_color=C["text"],
         ).grid(row=0, column=0, sticky="w")
 
@@ -401,7 +386,7 @@ class SVDCompressorGUI:
         self.status_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
 
         self.progress = ctk.CTkProgressBar(
-            stats_header, width=160, height=6, corner_radius=3,
+            stats_header, width=140, height=6, corner_radius=2,
             progress_color=C["accent"], fg_color=C["border"],
         )
         self.progress.grid(row=0, column=1, rowspan=2, sticky="e", padx=(10, 0))
@@ -409,7 +394,7 @@ class SVDCompressorGUI:
 
         self.metrics_frame = ctk.CTkFrame(stats_outer, fg_color="transparent")
         self.metrics_frame.pack(fill="x")
-        for i in range(7):
+        for i in range(4):
             self.metrics_frame.grid_columnconfigure(i, weight=1)
 
         self._build_empty_metrics()
@@ -433,44 +418,35 @@ class SVDCompressorGUI:
     def _create_metric_tile(self, col: int, label: str, value: str,
                             sub: str = "", ratio: float = -1) -> None:
         tile = ctk.CTkFrame(
-            self.metrics_frame, corner_radius=12,
+            self.metrics_frame, corner_radius=4,
             fg_color=C["card"], border_color=C["border"], border_width=1,
         )
-        tile.grid(row=0, column=col, padx=4, pady=2, sticky="nsew")
+        tile.grid(row=col // 4, column=col % 4, padx=4, pady=3, sticky="nsew")
 
         lbl = ctk.CTkLabel(
             tile, text=label,
             font=ctk.CTkFont(family="Segoe UI", size=11),
             text_color=C["muted"],
         )
-        lbl.pack(anchor="w", padx=14, pady=(12, 2))
+        lbl.pack(anchor="w", padx=10, pady=(8, 0))
 
         val = ctk.CTkLabel(
             tile, text=value,
-            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
             text_color=C["text"],
         )
-        val.pack(anchor="w", padx=14, pady=(0, 2))
+        val.pack(anchor="w", padx=10, pady=(0, 2))
 
-        bar = None
         if sub:
             ctk.CTkLabel(
                 tile, text=sub,
                 font=ctk.CTkFont(family="Segoe UI", size=10),
                 text_color=C["muted"],
-            ).pack(anchor="w", padx=14, pady=(0, 4))
-
-        if ratio >= 0:
-            bar = ctk.CTkProgressBar(
-                tile, width=120, height=8, corner_radius=4,
-                progress_color=C["accent"], fg_color=C["border"],
-            )
-            bar.pack(anchor="w", padx=14, pady=(2, 12))
-            bar.set(min(ratio / 100.0, 1.0))
+            ).pack(anchor="w", padx=10, pady=(0, 8))
         else:
-            ctk.CTkFrame(tile, height=8, fg_color="transparent").pack(pady=(0, 8))
+            ctk.CTkFrame(tile, height=8, fg_color="transparent").pack(pady=(0, 4))
 
-        self._metric_widgets.append({"frame": tile, "bar": bar})
+        self._metric_widgets.append({"frame": tile, "bar": None})
 
     def _show_stats(self, original_path: Path, matrix_shape: tuple[int, ...],
                     k_values: list[int], process_time: float,
@@ -521,13 +497,6 @@ class SVDCompressorGUI:
         self._create_metric_tile(5, "Rasio Data", "-")
         self._create_metric_tile(6, "Waktu Proses", "-")
 
-    # -- theme
-    def _toggle_theme(self) -> None:
-        if ctk.get_appearance_mode() == "Dark":
-            ctk.set_appearance_mode("Light")
-        else:
-            ctk.set_appearance_mode("Dark")
-
     # -- image selection
     def choose_image(self) -> None:
         filename = filedialog.askopenfilename(
@@ -547,7 +516,7 @@ class SVDCompressorGUI:
         self.last_result_text = ""
         self._last_mse = None
         self._compressed_images_by_k = {}
-        self.save_button.configure(state="disabled", text="Simpan Citra")
+        self.save_button.configure(state="disabled", text="Simpan")
         if hasattr(self, "compressed_fullscreen_button"):
             self.compressed_fullscreen_button.grid()
         self._show_original_preview()
@@ -566,7 +535,7 @@ class SVDCompressorGUI:
         color_mode = self.color_mode_var.get()
         self.is_compressing = True
         self.compress_button.configure(state="disabled")
-        self.save_button.configure(state="disabled", text="Simpan Citra")
+        self.save_button.configure(state="disabled", text="Simpan")
         self._start_progress()
         self.status_var.set("Memproses SVD citra satelit di background, mohon tunggu...")
         self._build_empty_metrics()
@@ -636,7 +605,7 @@ class SVDCompressorGUI:
             if hasattr(self, "compressed_fullscreen_button"):
                 self.compressed_fullscreen_button.grid_remove()
         else:
-            self.save_button.configure(state="normal", text="Simpan Citra")
+            self.save_button.configure(state="normal", text="Simpan")
             if hasattr(self, "compressed_fullscreen_button"):
                 self.compressed_fullscreen_button.grid()
         if len(compressed_images) > 1:
@@ -644,7 +613,7 @@ class SVDCompressorGUI:
                 f"Selesai. Menampilkan {len(compressed_images)} preview. Gunakan tombol Simpan pada masing-masing kartu.")
         else:
             self.status_var.set(
-                f"Selesai. Preview k = {selected_k}. Klik Simpan Citra untuk menyimpan.")
+                f"Selesai. Preview k = {selected_k}. Klik Simpan untuk menyimpan.")
         self._set_compression_idle()
 
     def _show_compression_error(self, error_message: str) -> None:
@@ -784,7 +753,7 @@ class SVDCompressorGUI:
                                      subtitle: str | None,
                                      show_actions: bool = False) -> None:
         card = ctk.CTkFrame(
-            self.compressed_results_frame, corner_radius=10,
+            self.compressed_results_frame, corner_radius=4,
             fg_color=C["card"], border_color=C["border"], border_width=1,
         )
         grid_row = index // 2
@@ -806,7 +775,7 @@ class SVDCompressorGUI:
         if show_actions:
             ctk.CTkButton(
                 header, text="Full", width=42, height=26,
-                corner_radius=6, fg_color=C["border"], hover_color=C["accent"],
+                corner_radius=4, fg_color=C["border"], hover_color=C["card_hover"],
                 text_color=C["text"],
                 font=ctk.CTkFont(family="Segoe UI", size=11),
                 command=lambda img=image.copy(), kk=k: self._open_image_fullscreen(
@@ -816,9 +785,9 @@ class SVDCompressorGUI:
 
             ctk.CTkButton(
                 header, text="Simpan", width=70, height=26,
-                corner_radius=6, fg_color=C["accent"], hover_color=C["accent_hover"],
+                corner_radius=4, fg_color=C["accent"], hover_color=C["accent_hover"],
                 text_color=C["accent_fg"],
-                font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                font=ctk.CTkFont(family="Segoe UI", size=11),
                 command=lambda kk=k: self._save_compressed_k(kk),
             ).grid(row=0, column=2, padx=(6, 0), sticky="e")
 
@@ -846,33 +815,33 @@ class SVDCompressorGUI:
     def _open_image_fullscreen(self, pil_img: Image.Image, title: str) -> None:
         top = ctk.CTkToplevel(self.root)
         top.title(title)
-        top.configure(fg_color="#0d1117")
+        top.configure(fg_color="#f3f4f6")
 
-        bar = ctk.CTkFrame(top, fg_color="#161b22", height=48)
+        bar = ctk.CTkFrame(top, fg_color="#ffffff", height=46)
         bar.pack(fill="x")
         bar.pack_propagate(False)
 
         ctk.CTkLabel(
             bar, text=f"  {title}",
-            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
-            text_color="#f1f5f9",
+            font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
+            text_color="#111827",
         ).pack(side="left", padx=10)
 
         ctk.CTkLabel(
-            bar, text="Scroll = Zoom  |  Drag = Pan  |  Double-click = Reset  |  Esc = Tutup",
+            bar, text="Scroll zoom, drag geser, Esc tutup",
             font=ctk.CTkFont(family="Segoe UI", size=11),
-            text_color="#64748b",
+            text_color="#4b5563",
         ).pack(side="left", padx=20)
 
         ctk.CTkButton(
-            bar, text="✕  Tutup", width=100, height=32,
-            corner_radius=8, fg_color="#ef4444", hover_color="#dc2626",
-            text_color="#ffffff",
-            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            bar, text="Tutup", width=80, height=30,
+            corner_radius=4, fg_color="#d1d5db", hover_color="#e5e7eb",
+            text_color="#111827",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
             command=top.destroy,
         ).pack(side="right", padx=16, pady=8)
 
-        viewer = ZoomablePreview(top, fg_color="#0d1117")
+        viewer = ZoomablePreview(top, fg_color="#e5e7eb")
         viewer.pack(fill="both", expand=True, padx=8, pady=(4, 8))
         viewer.set_image(pil_img)
 
@@ -897,7 +866,7 @@ class SVDCompressorGUI:
         self.last_compressed_k = None
         self._last_mse = None
         self._compressed_images_by_k = {}
-        self.save_button.configure(state="disabled", text="Simpan Citra")
+        self.save_button.configure(state="disabled", text="Simpan")
         if hasattr(self, "compressed_fullscreen_button"):
             self.compressed_fullscreen_button.grid()
         if self.image_path is not None:
@@ -909,7 +878,7 @@ class SVDCompressorGUI:
 
 
 def run_gui() -> None:
-    ctk.set_appearance_mode("System")
+    ctk.set_appearance_mode("Light")
     root = ctk.CTk()
     SVDCompressorGUI(root)
     root.mainloop()
