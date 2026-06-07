@@ -17,12 +17,11 @@ from main import (
     compress_matrix_with_rank_values,
     format_file_size,
     load_image_matrix,
+    peak_signal_noise_ratio,
     parse_k_values,
     storage_stats,
     validate_image_path,
 )
-
-PREVIEW_MAX_DIMENSION = 1200
 
 
 class ImagePreview(ttk.Frame):
@@ -162,7 +161,7 @@ class SVDCompressorGUI:
         self.last_matrix_shape: tuple[int, ...] = ()
         self.last_k_values: list[int] = []
         self.last_process_time = 0.0
-        self.last_mse: float | None = None
+        self.last_psnr: float | None = None
         self.is_compressing = False
         self.worker_queue: queue.Queue[tuple] = queue.Queue()
         self.result_widgets: list[tk.Widget] = []
@@ -176,7 +175,7 @@ class SVDCompressorGUI:
             "Resolusi": tk.StringVar(value="- x -"),
             "Ukuran Asli": tk.StringVar(value="-"),
             "Ukuran Kompres": tk.StringVar(value="-"),
-            "MSE": tk.StringVar(value="-"),
+            "PSNR": tk.StringVar(value="-"),
             "Nilai k": tk.StringVar(value="-"),
             "Rasio Data": tk.StringVar(value="-"),
             "Waktu Proses": tk.StringVar(value="-"),
@@ -342,7 +341,7 @@ class SVDCompressorGUI:
         self.last_compressed_image = None
         self.last_compressed_k = None
         self.last_original_path = None
-        self.last_mse = None
+        self.last_psnr = None
         self.compressed_images_by_k = {}
         self.save_button.configure(state="disabled")
         self.result_fullscreen_button.grid()
@@ -381,12 +380,11 @@ class SVDCompressorGUI:
             matrix = load_image_matrix(image_path, color_mode)
             k_values = parse_k_values(raw_value, min(matrix.shape[:2]))
             compressed_images = compress_matrix_with_rank_values(matrix, k_values)
-            mse_by_k = {
-                k: float(np.mean((matrix - image_matrix) ** 2))
+            psnr_by_k = {
+                k: peak_signal_noise_ratio(matrix, image_matrix)
                 for k, image_matrix in compressed_images.items()
             }
             selected_k = k_values[-1]
-            estimated_output = self._estimate_output_size(compressed_images[selected_k], image_path)
             process_time = time.perf_counter() - start_time
             self.worker_queue.put((
                 "success",
@@ -394,12 +392,11 @@ class SVDCompressorGUI:
                 selected_k,
                 compressed_images[selected_k],
                 compressed_images,
-                mse_by_k,
+                psnr_by_k,
                 matrix.shape,
                 k_values,
                 process_time,
-                mse_by_k[selected_k],
-                estimated_output,
+                psnr_by_k[selected_k],
             ))
         except (FileNotFoundError, ValueError, np.linalg.LinAlgError) as error:
             self.worker_queue.put(("error", str(error)))
@@ -415,24 +412,22 @@ class SVDCompressorGUI:
                         selected_k,
                         selected_image,
                         compressed_images,
-                        mse_by_k,
+                        psnr_by_k,
                         matrix_shape,
                         k_values,
                         process_time,
-                        mse,
-                        estimated_output,
+                        psnr,
                     ) = message
                     self._finish_compression(
                         image_path,
                         selected_k,
                         selected_image,
                         compressed_images,
-                        mse_by_k,
+                        psnr_by_k,
                         matrix_shape,
                         k_values,
                         process_time,
-                        mse,
-                        estimated_output,
+                        psnr,
                     )
                 elif message[0] == "error":
                     self._show_compression_error(message[1])
@@ -447,12 +442,11 @@ class SVDCompressorGUI:
         selected_k: int,
         selected_image: np.ndarray,
         compressed_images: dict[int, np.ndarray],
-        mse_by_k: dict[int, float],
+        psnr_by_k: dict[int, float],
         matrix_shape: tuple[int, ...],
         k_values: list[int],
         process_time: float,
-        mse: float,
-        estimated_output: tuple[int, str],
+        psnr: float,
     ) -> None:
         self.last_original_path = image_path
         self.last_compressed_k = selected_k
@@ -460,11 +454,11 @@ class SVDCompressorGUI:
         self.last_matrix_shape = matrix_shape
         self.last_k_values = k_values
         self.last_process_time = process_time
-        self.last_mse = mse
+        self.last_psnr = psnr
         self.compressed_images_by_k = compressed_images
 
-        self._show_result_previews(compressed_images, mse_by_k)
-        self._show_stats(image_path, matrix_shape, k_values, process_time, mse, estimated_output=estimated_output)
+        self._show_result_previews(compressed_images, psnr_by_k)
+        self._show_stats(image_path, matrix_shape, k_values, process_time, psnr, estimated_image=selected_image)
 
         if len(compressed_images) > 1:
             self.save_button.configure(state="disabled")
@@ -517,7 +511,7 @@ class SVDCompressorGUI:
             self.last_matrix_shape,
             self.last_k_values,
             self.last_process_time,
-            self.last_mse,
+            self.last_psnr,
             output_path,
         )
         self.status_var.set(f"Gambar hasil SVD berhasil disimpan: {output_path.name}")
@@ -598,11 +592,6 @@ class SVDCompressorGUI:
     def _save_optimized_png(self, image: Image.Image, output_path: Path | BytesIO) -> None:
         image.save(output_path, format="PNG", optimize=True, compress_level=9)
 
-    def _thumbnail_for_preview(self, image: Image.Image, max_dimension: int = PREVIEW_MAX_DIMENSION) -> Image.Image:
-        preview = image.copy()
-        preview.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
-        return preview
-
     def _show_original_preview(self) -> None:
         if self.image_path is None:
             return
@@ -610,8 +599,8 @@ class SVDCompressorGUI:
         color_mode = self.color_mode_var.get()
         mode = color_mode if color_mode in {"RGB", "RGBA"} else "L"
         image = Image.open(self.image_path).convert(mode)
-        self.original_pil = self._thumbnail_for_preview(image)
-        self.original_preview.set_image(self.original_pil)
+        self.original_pil = image
+        self.original_preview.set_image(image)
         self.compressed_pil = None
         self.compressed_images_by_k = {}
         self._clear_result_previews()
@@ -626,7 +615,7 @@ class SVDCompressorGUI:
         self.result_frame.columnconfigure(0, weight=1)
         self.result_widgets.append(label)
 
-    def _show_result_previews(self, compressed_images: dict[int, np.ndarray], mse_by_k: dict[int, float]) -> None:
+    def _show_result_previews(self, compressed_images: dict[int, np.ndarray], psnr_by_k: dict[int, float]) -> None:
         for widget in self.result_widgets:
             widget.destroy()
         self.result_widgets.clear()
@@ -634,9 +623,8 @@ class SVDCompressorGUI:
         show_actions = len(compressed_images) > 1
         for index, (k, image_matrix) in enumerate(compressed_images.items()):
             image = Image.fromarray(image_matrix.astype(np.uint8))
-            preview_image = self._thumbnail_for_preview(image)
             if k == self.last_compressed_k:
-                self.compressed_pil = preview_image.copy()
+                self.compressed_pil = image
 
             _, _, ratio = storage_stats(self.last_matrix_shape, k)
             item = ttk.Frame(self.result_frame, style="Panel.TFrame", padding=8)
@@ -651,26 +639,26 @@ class SVDCompressorGUI:
                 ttk.Button(
                     header,
                     text="Lihat",
-                    command=lambda img=preview_image.copy(), kk=k: self._open_image_fullscreen(img, f"SVD k={kk}"),
+                    command=lambda img=image.copy(), kk=k: self._open_image_fullscreen(img, f"SVD k={kk}"),
                 ).pack(side="right", padx=(4, 0))
                 ttk.Button(header, text="Simpan", command=lambda kk=k: self._save_compressed_k(kk)).pack(side="right")
 
             ttk.Label(
                 item,
-                text=self._result_summary_text(image_matrix, mse_by_k[k], ratio, show_actions),
+                text=self._result_summary_text(image_matrix, psnr_by_k[k], ratio, show_actions),
                 style="Muted.TLabel",
             ).pack(anchor="w")
 
             preview = ImagePreview(item, placeholder_text="")
             preview.pack(fill="both", expand=True, pady=(5, 0))
             preview.configure(height=190)
-            preview.set_image(preview_image)
+            preview.set_image(image)
             self.result_widgets.append(item)
 
     def _result_summary_text(
         self,
         image_matrix: np.ndarray,
-        mse: float,
+        psnr: float,
         ratio: float,
         show_file_size: bool,
     ) -> str:
@@ -682,12 +670,19 @@ class SVDCompressorGUI:
                 else self._estimate_jpg_size(image_matrix)
             )
             return (
-                f"Rasio {ratio:.1f}% | MSE {mse:.2f} | "
+                f"Rasio {ratio:.1f}% | PSNR {self._format_psnr(psnr)} | "
                 f"{size_label} {estimated_size}"
             )
 
         rows, cols = self.last_matrix_shape[:2]
-        return f"Rasio {ratio:.1f}% | MSE {mse:.2f} | {cols} x {rows}"
+        return f"Rasio {ratio:.1f}% | PSNR {self._format_psnr(psnr)} | {cols} x {rows}"
+
+    def _format_psnr(self, psnr: float | None) -> str:
+        if psnr is None:
+            return "-"
+        if np.isinf(psnr):
+            return "inf dB"
+        return f"{psnr:.2f} dB"
 
     def _estimate_jpg_size(self, image_matrix: np.ndarray) -> str:
         buffer = BytesIO()
@@ -745,7 +740,7 @@ class SVDCompressorGUI:
         self.metric_vars["Resolusi"].set(f"{cols} x {rows}")
         self.metric_vars["Ukuran Asli"].set(format_file_size(original_size))
         self.metric_vars["Ukuran Kompres"].set("-")
-        self.metric_vars["MSE"].set("-")
+        self.metric_vars["PSNR"].set("-")
         self.metric_vars["Nilai k"].set("-")
         self.metric_vars["Rasio Data"].set("-")
         self.metric_vars["Waktu Proses"].set("-")
@@ -756,9 +751,9 @@ class SVDCompressorGUI:
         matrix_shape: tuple[int, ...],
         k_values: list[int],
         process_time: float,
-        mse: float | None,
+        psnr: float | None,
         saved_path: Path | None = None,
-        estimated_output: tuple[int, str] | None = None,
+        estimated_image: np.ndarray | None = None,
     ) -> None:
         rows, cols = matrix_shape[:2]
         selected_k = k_values[-1]
@@ -767,7 +762,7 @@ class SVDCompressorGUI:
 
         self.metric_vars["Resolusi"].set(f"{cols} x {rows}")
         self.metric_vars["Ukuran Asli"].set(format_file_size(original_size))
-        self.metric_vars["MSE"].set(f"{mse:.2f}" if mse is not None else "-")
+        self.metric_vars["PSNR"].set(self._format_psnr(psnr))
         self.metric_vars["Nilai k"].set(", ".join(str(k) for k in k_values))
         self.metric_vars["Rasio Data"].set(f"{stored_ratio:.1f}% ({compressed_data:,} elemen)")
         self.metric_vars["Waktu Proses"].set(f"{process_time:.2f} detik")
@@ -776,8 +771,8 @@ class SVDCompressorGUI:
             compressed_size = saved_path.stat().st_size
             file_ratio = (compressed_size / original_size) * 100 if original_size else 0
             self.metric_vars["Ukuran Kompres"].set(f"{format_file_size(compressed_size)} ({file_ratio:.1f}%)")
-        elif estimated_output is not None:
-            estimated_size, format_name = estimated_output
+        elif estimated_image is not None:
+            estimated_size, format_name = self._estimate_output_size(estimated_image)
             file_ratio = (estimated_size / original_size) * 100 if original_size else 0
             self.metric_vars["Ukuran Kompres"].set(
                 f"~{format_file_size(estimated_size)} {format_name} ({file_ratio:.1f}%)"
@@ -789,7 +784,7 @@ class SVDCompressorGUI:
         for variable in self.metric_vars.values():
             variable.set("-")
 
-    def _estimate_output_size(self, image_matrix: np.ndarray, original_path: Path | None = None) -> tuple[int, str]:
+    def _estimate_output_size(self, image_matrix: np.ndarray) -> tuple[int, str]:
         buffer = BytesIO()
         image = Image.fromarray(image_matrix.astype(np.uint8))
         if self._has_alpha_channel(image_matrix):
@@ -804,7 +799,7 @@ class SVDCompressorGUI:
     def _on_color_mode_changed(self, _event=None) -> None:
         self.last_compressed_image = None
         self.last_compressed_k = None
-        self.last_mse = None
+        self.last_psnr = None
         self.compressed_images_by_k = {}
         self.save_button.configure(state="disabled")
         self.result_fullscreen_button.grid()

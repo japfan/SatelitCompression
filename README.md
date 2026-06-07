@@ -26,8 +26,6 @@ Semakin kecil nilai `k`, semakin sedikit data yang disimpan, tetapi detail gamba
 
 Untuk mode `RGB`, SVD dijalankan pada setiap kanal warna secara terpisah. Untuk mode `RGBA`, SVD dijalankan pada kanal R, G, dan B, sementara kanal alpha dipertahankan dari gambar asli.
 
-Untuk mengurangi waktu proses pada gambar besar, program memakai pendekatan truncated SVD ketika nilai `k` lebih kecil dari rank maksimal matriks. Jadi program tidak selalu menghitung seluruh singular value yang tidak dipakai.
-
 ## Struktur Folder
 
 ```text
@@ -92,7 +90,7 @@ Di jendela aplikasi:
 - Klik tombol `Proses`.
 - Setelah proses selesai, klik `Simpan` untuk memilih lokasi penyimpanan.
 
-Program akan langsung menampilkan preview gambar asli, resolusi, dan ukuran file asli ketika file dimasukkan. Setelah proses SVD, program menampilkan MSE, estimasi rasio data, waktu proses, dan estimasi ukuran file hasil tanpa harus menyimpan lebih dulu.
+Program akan langsung menampilkan preview gambar asli, resolusi, dan ukuran file asli ketika file dimasukkan. Setelah proses SVD, program menampilkan PSNR, estimasi rasio data, waktu proses, dan estimasi ukuran file hasil tanpa harus menyimpan lebih dulu.
 
 Nilai `k` juga bisa diisi beberapa angka sekaligus:
 
@@ -139,7 +137,7 @@ Nilai k: 50
 Jumlah data asli: 262144
 Jumlah data setelah kompresi rank-50: 51250
 Rasio representasi data matriks: 19.55%
-MSE: 12.34
+PSNR: 37.22 dB
 Ukuran file asli: 80.12 KB
 Ukuran file hasil kompresi: 42.30 KB
 Rasio ukuran file hasil/asli: 52.80%

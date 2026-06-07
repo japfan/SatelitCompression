@@ -1,40 +1,14 @@
 from pathlib import Path
-import queue
 import sys
-import threading
 import time
-import tkinter as tk
-from tkinter import filedialog, messagebox
-try:
-    import winreg
-except ImportError:
-    winreg = None
-
 import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image, ImageTk, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp", ".tga"}
 SUPPORTED_FORMAT_TEXT = ".jpg, .jpeg, .png, .tif, .tiff, .webp, .bmp, atau .tga"
 OUTPUT_DIR = Path("output")
-RANDOMIZED_SVD_OVERSAMPLES = 16
-RANDOMIZED_SVD_POWER_ITERATIONS = 1
-
-
-def windows_prefers_dark_mode() -> bool:
-    if winreg is None:
-        return False
-
-    try:
-        with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-        ) as key:
-            apps_use_light_theme, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
-            return apps_use_light_theme == 0
-    except OSError:
-        return False
 
 
 def read_image_path() -> Path:
@@ -111,59 +85,34 @@ def read_k_values(max_k: int) -> list[int]:
 
 
 def compress_with_rank_k(u: np.ndarray, s: np.ndarray, vt: np.ndarray, k: int) -> np.ndarray:
-    reconstructed = (u[:, :k] * s[:k]) @ vt[:k, :]
+    reconstructed = u[:, :k] @ np.diag(s[:k]) @ vt[:k, :]
     return np.clip(reconstructed, 0, 255)
-
-
-def decompose_for_rank(channel: np.ndarray, target_k: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    rows, cols = channel.shape
-    max_rank = min(rows, cols)
-    target_k = min(target_k, max_rank)
-    sample_count = min(max_rank, target_k + RANDOMIZED_SVD_OVERSAMPLES)
-
-    if sample_count >= max_rank or max_rank < 256:
-        return np.linalg.svd(channel, full_matrices=False)
-
-    rng = np.random.default_rng(0)
-    omega = rng.standard_normal((cols, sample_count)).astype(np.float32)
-    sample = channel @ omega
-    for _ in range(RANDOMIZED_SVD_POWER_ITERATIONS):
-        sample = channel @ (channel.T @ sample)
-
-    q, _ = np.linalg.qr(sample, mode="reduced")
-    projected = q.T @ channel
-    u_projected, s, vt = np.linalg.svd(projected, full_matrices=False)
-    u = q @ u_projected
-    return u[:, :target_k], s[:target_k], vt[:target_k, :]
-
 
 def compress_matrix_with_rank_k(matrix: np.ndarray, k: int) -> np.ndarray:
     if matrix.ndim == 2:
-        u, s, vt = decompose_for_rank(matrix, k)
+        u, s, vt = np.linalg.svd(matrix, full_matrices=False)
         return compress_with_rank_k(u, s, vt, k)
 
     channels = []
     color_channels = 3 if matrix.shape[2] == 4 else matrix.shape[2]
     for channel_index in range(color_channels):
         channel = matrix[:, :, channel_index]
-        u, s, vt = decompose_for_rank(channel, k)
+        u, s, vt = np.linalg.svd(channel, full_matrices=False)
         channels.append(compress_with_rank_k(u, s, vt, k))
     if matrix.shape[2] == 4:
         channels.append(matrix[:, :, 3])
     return np.stack(channels, axis=2)
 
-
 def compress_matrix_with_rank_values(matrix: np.ndarray, k_values: list[int]) -> dict[int, np.ndarray]:
-    target_k = max(k_values)
     if matrix.ndim == 2:
-        u, s, vt = decompose_for_rank(matrix, target_k)
+        u, s, vt = np.linalg.svd(matrix, full_matrices=False)
         return {k: compress_with_rank_k(u, s, vt, k) for k in k_values}
 
     decomposed_channels = []
     color_channels = 3 if matrix.shape[2] == 4 else matrix.shape[2]
     for channel_index in range(color_channels):
         channel = matrix[:, :, channel_index]
-        decomposed_channels.append(decompose_for_rank(channel, target_k))
+        decomposed_channels.append(np.linalg.svd(channel, full_matrices=False))
 
     compressed_images = {}
     for k in k_values:
@@ -193,6 +142,13 @@ def mean_squared_error(original: np.ndarray, reconstructed: np.ndarray) -> float
     return float(np.mean((original - reconstructed) ** 2))
 
 
+def peak_signal_noise_ratio(original: np.ndarray, reconstructed: np.ndarray) -> float:
+    mse = mean_squared_error(original, reconstructed)
+    if mse == 0:
+        return float("inf")
+    return float(20 * np.log10(255.0 / np.sqrt(mse)))
+
+
 def print_stats(matrix_shape: tuple[int, int], compressed_images: dict[int, np.ndarray],
                 original: np.ndarray) -> None:
     rows, cols = matrix_shape
@@ -200,12 +156,12 @@ def print_stats(matrix_shape: tuple[int, int], compressed_images: dict[int, np.n
 
     for k, image_matrix in compressed_images.items():
         original_data, compressed_data, stored_ratio = storage_stats(matrix_shape, k)
-        mse = mean_squared_error(original, image_matrix)
+        psnr = peak_signal_noise_ratio(original, image_matrix)
         print(f"\nNilai k: {k}")
         print(f"Jumlah data asli: {original_data}")
         print(f"Jumlah data setelah kompresi rank-{k}: {compressed_data}")
         print(f"Rasio representasi data matriks: {stored_ratio:.2f}%")
-        print(f"MSE: {mse:.2f}")
+        print(f"PSNR: {psnr:.2f} dB")
 
 
 def print_file_size_stats(original_path: Path, output_paths: dict[int, Path]) -> None:
@@ -268,13 +224,13 @@ def show_comparison(original: np.ndarray, compressed_images: dict[int, np.ndarra
     plt.title("Gambar Game Asli")
     plt.axis("off")
 
-    # Setiap nilai k ditampilkan dalam subplot sendiri lengkap dengan rasio dan MSE.
+    # Setiap nilai k ditampilkan dalam subplot sendiri lengkap dengan rasio dan PSNR.
     for index, (k, image_matrix) in enumerate(compressed_images.items(), start=2):
         _, _, stored_ratio = storage_stats(original.shape, k)
-        mse = mean_squared_error(original, image_matrix)
+        psnr = peak_signal_noise_ratio(original, image_matrix)
         plt.subplot(rows, columns, index)
         plt.imshow(image_matrix, cmap="gray")
-        plt.title(f"SVD k={k}\nRasio: {stored_ratio:.2f}% | MSE: {mse:.2f}")
+        plt.title(f"SVD k={k}\nRasio: {stored_ratio:.2f}% | PSNR: {psnr:.2f} dB")
         plt.axis("off")
 
     plt.tight_layout()
