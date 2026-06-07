@@ -1,4 +1,4 @@
-"""Simple tkinter GUI for SVD-based satellite image compression."""
+"""Simple tkinter GUI for SVD-based game image compression."""
 from __future__ import annotations
 
 import queue
@@ -14,17 +14,19 @@ from PIL import Image, ImageTk
 
 from main import (
     SUPPORTED_FORMAT_TEXT,
-    compress_matrix_with_rank_k,
+    compress_matrix_with_rank_values,
     format_file_size,
     load_image_matrix,
-    parse_compression_values,
+    parse_k_values,
     storage_stats,
     validate_image_path,
 )
 
+PREVIEW_MAX_DIMENSION = 1200
+
 
 class ImagePreview(ttk.Frame):
-    def __init__(self, master, placeholder_text: str = "Belum ada citra") -> None:
+    def __init__(self, master, placeholder_text: str = "Belum ada gambar") -> None:
         super().__init__(master)
         self.placeholder_text = placeholder_text
         self.pil_image: Image.Image | None = None
@@ -146,7 +148,7 @@ class ImagePreview(ttk.Frame):
 class SVDCompressorGUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Kompresi Citra Satelit SVD")
+        self.root.title("Kompresi Gambar Game SVD")
         self.root.geometry("1080x760")
         self.root.minsize(900, 650)
 
@@ -165,11 +167,10 @@ class SVDCompressorGUI:
         self.worker_queue: queue.Queue[tuple] = queue.Queue()
         self.result_widgets: list[tk.Widget] = []
 
-        self.path_var = tk.StringVar(value="Belum ada citra satelit dipilih")
+        self.path_var = tk.StringVar(value="Belum ada gambar game dipilih")
         self.k_var = tk.StringVar(value="50")
-        self.unit_var = tk.StringVar(value="Nilai k")
         self.color_mode_var = tk.StringVar(value="Grayscale")
-        self.status_var = tk.StringVar(value="Pilih citra, masukkan nilai k, lalu klik Proses.")
+        self.status_var = tk.StringVar(value="Pilih gambar, masukkan nilai k, lalu klik Proses.")
 
         self.metric_vars = {
             "Resolusi": tk.StringVar(value="- x -"),
@@ -210,10 +211,10 @@ class SVDCompressorGUI:
 
         header = ttk.Frame(self.root, padding=(16, 12, 16, 6))
         header.grid(row=0, column=0, sticky="ew")
-        ttk.Label(header, text="Kompresi Citra Satelit dengan SVD", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(header, text="Kompresi Gambar Game dengan SVD", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             header,
-            text="Program sederhana untuk membandingkan citra asli dan hasil kompresi.",
+            text="Program sederhana untuk membandingkan gambar asli dan hasil kompresi.",
             foreground="#4b5563",
         ).pack(anchor="w", pady=(2, 0))
 
@@ -221,41 +222,30 @@ class SVDCompressorGUI:
         controls.grid(row=1, column=0, padx=16, pady=(4, 10), sticky="ew")
         controls.columnconfigure(1, weight=1)
 
-        ttk.Button(controls, text="Pilih Citra", command=self.choose_image).grid(row=0, column=0, sticky="w")
+        ttk.Button(controls, text="Pilih Gambar", command=self.choose_image).grid(row=0, column=0, sticky="w")
         ttk.Label(controls, textvariable=self.path_var, style="Muted.TLabel").grid(
             row=0, column=1, columnspan=5, padx=(10, 0), sticky="ew"
         )
 
         ttk.Label(controls, text="Nilai SVD", style="Muted.TLabel").grid(row=1, column=0, pady=(12, 2), sticky="w")
-        ttk.Label(controls, text="Satuan", style="Muted.TLabel").grid(row=1, column=1, padx=(12, 0), pady=(12, 2), sticky="w")
-        ttk.Label(controls, text="Kanal Citra", style="Muted.TLabel").grid(row=1, column=2, padx=(12, 0), pady=(12, 2), sticky="w")
+        ttk.Label(controls, text="Kanal Gambar", style="Muted.TLabel").grid(row=1, column=1, padx=(12, 0), pady=(12, 2), sticky="w")
 
         ttk.Entry(controls, textvariable=self.k_var, width=22).grid(row=2, column=0, sticky="ew")
-        unit_box = ttk.Combobox(
-            controls,
-            textvariable=self.unit_var,
-            values=("Nilai k", "Persen"),
-            width=12,
-            state="readonly",
-        )
-        unit_box.grid(row=2, column=1, padx=(12, 0), sticky="w")
-        unit_box.bind("<<ComboboxSelected>>", self._update_input_hint)
-
         color_box = ttk.Combobox(
             controls,
             textvariable=self.color_mode_var,
-            values=("Grayscale", "RGB"),
+            values=("Grayscale", "RGB", "RGBA"),
             width=12,
             state="readonly",
         )
-        color_box.grid(row=2, column=2, padx=(12, 0), sticky="w")
+        color_box.grid(row=2, column=1, padx=(12, 0), sticky="w")
         color_box.bind("<<ComboboxSelected>>", self._on_color_mode_changed)
 
         self.compress_button = ttk.Button(controls, text="Proses", command=self.compress_image)
-        self.compress_button.grid(row=2, column=3, padx=(18, 0), sticky="w")
+        self.compress_button.grid(row=2, column=2, padx=(18, 0), sticky="w")
 
         self.save_button = ttk.Button(controls, text="Simpan", command=self.save_photo, state="disabled")
-        self.save_button.grid(row=2, column=4, padx=(8, 0), sticky="w")
+        self.save_button.grid(row=2, column=3, padx=(8, 0), sticky="w")
 
         preview_area = ttk.Frame(self.root)
         preview_area.grid(row=2, column=0, padx=16, sticky="nsew")
@@ -271,7 +261,7 @@ class SVDCompressorGUI:
         original_header = ttk.Frame(original_panel, style="Panel.TFrame")
         original_header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         original_header.columnconfigure(0, weight=1)
-        ttk.Label(original_header, text="Citra Satelit Asli", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(original_header, text="Gambar Game Asli", style="Section.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Button(original_header, text="Lihat", command=lambda: self._open_fullscreen("original")).grid(row=0, column=1)
         self.original_preview = ImagePreview(original_panel)
         self.original_preview.grid(row=1, column=0, sticky="nsew")
@@ -332,12 +322,15 @@ class SVDCompressorGUI:
 
     def choose_image(self) -> None:
         filename = filedialog.askopenfilename(
-            title="Pilih file citra satelit",
+            title="Pilih file gambar game",
             filetypes=[
-                ("Citra Satelit", "*.jpg *.jpeg *.png *.tif *.tiff"),
+                ("Gambar Game", "*.jpg *.jpeg *.png *.tif *.tiff *.webp *.bmp *.tga"),
                 ("TIFF", "*.tif *.tiff"),
                 ("JPEG", "*.jpg *.jpeg"),
                 ("PNG", "*.png"),
+                ("WEBP", "*.webp"),
+                ("BMP", "*.bmp"),
+                ("TGA", "*.tga"),
             ],
         )
         if not filename:
@@ -345,7 +338,7 @@ class SVDCompressorGUI:
 
         self.image_path = Path(filename)
         self.path_var.set(str(self.image_path))
-        self.status_var.set(f"Citra siap diproses. Format didukung: {SUPPORTED_FORMAT_TEXT}.")
+        self.status_var.set(f"Gambar siap diproses. Format didukung: {SUPPORTED_FORMAT_TEXT}.")
         self.last_compressed_image = None
         self.last_compressed_k = None
         self.last_original_path = None
@@ -358,7 +351,7 @@ class SVDCompressorGUI:
 
     def compress_image(self) -> None:
         if self.image_path is None:
-            messagebox.showerror("Error", "Pilih citra satelit terlebih dahulu.")
+            messagebox.showerror("Error", "Pilih gambar game terlebih dahulu.")
             return
         if self.is_compressing:
             return
@@ -376,24 +369,24 @@ class SVDCompressorGUI:
             args=(
                 self.image_path,
                 self.k_var.get(),
-                self.unit_var.get(),
                 self.color_mode_var.get(),
             ),
             daemon=True,
         ).start()
 
-    def _compress_worker(self, image_path: Path, raw_value: str, unit: str, color_mode: str) -> None:
+    def _compress_worker(self, image_path: Path, raw_value: str, color_mode: str) -> None:
         try:
             start_time = time.perf_counter()
             validate_image_path(image_path)
             matrix = load_image_matrix(image_path, color_mode)
-            k_values = parse_compression_values(raw_value, min(matrix.shape[:2]), unit)
-            compressed_images = {k: compress_matrix_with_rank_k(matrix, k) for k in k_values}
+            k_values = parse_k_values(raw_value, min(matrix.shape[:2]))
+            compressed_images = compress_matrix_with_rank_values(matrix, k_values)
             mse_by_k = {
                 k: float(np.mean((matrix - image_matrix) ** 2))
                 for k, image_matrix in compressed_images.items()
             }
             selected_k = k_values[-1]
+            estimated_output = self._estimate_output_size(compressed_images[selected_k], image_path)
             process_time = time.perf_counter() - start_time
             self.worker_queue.put((
                 "success",
@@ -406,6 +399,7 @@ class SVDCompressorGUI:
                 k_values,
                 process_time,
                 mse_by_k[selected_k],
+                estimated_output,
             ))
         except (FileNotFoundError, ValueError, np.linalg.LinAlgError) as error:
             self.worker_queue.put(("error", str(error)))
@@ -426,6 +420,7 @@ class SVDCompressorGUI:
                         k_values,
                         process_time,
                         mse,
+                        estimated_output,
                     ) = message
                     self._finish_compression(
                         image_path,
@@ -437,6 +432,7 @@ class SVDCompressorGUI:
                         k_values,
                         process_time,
                         mse,
+                        estimated_output,
                     )
                 elif message[0] == "error":
                     self._show_compression_error(message[1])
@@ -456,6 +452,7 @@ class SVDCompressorGUI:
         k_values: list[int],
         process_time: float,
         mse: float,
+        estimated_output: tuple[int, str],
     ) -> None:
         self.last_original_path = image_path
         self.last_compressed_k = selected_k
@@ -467,7 +464,7 @@ class SVDCompressorGUI:
         self.compressed_images_by_k = compressed_images
 
         self._show_result_previews(compressed_images, mse_by_k)
-        self._show_stats(image_path, matrix_shape, k_values, process_time, mse)
+        self._show_stats(image_path, matrix_shape, k_values, process_time, mse, estimated_output=estimated_output)
 
         if len(compressed_images) > 1:
             self.save_button.configure(state="disabled")
@@ -496,23 +493,25 @@ class SVDCompressorGUI:
             messagebox.showerror("Error", "Belum ada hasil pengolahan SVD.")
             return
 
+        defaultextension, initialfile, filetypes = self._save_dialog_options(
+            self.last_compressed_image,
+            self.last_compressed_k,
+        )
         save_path = filedialog.asksaveasfilename(
-            title="Simpan citra hasil pengolahan SVD",
-            defaultextension=".jpg",
-            initialfile=f"citra_satelit_svd_k{self.last_compressed_k}.jpg",
-            filetypes=[
-                ("JPEG", "*.jpg"),
-                ("JPEG", "*.jpeg"),
-                ("PNG", "*.png"),
-                ("TIFF", "*.tif"),
-                ("TIFF", "*.tiff"),
-            ],
+            title="Simpan gambar hasil pengolahan SVD",
+            defaultextension=defaultextension,
+            initialfile=initialfile,
+            filetypes=filetypes,
         )
         if not save_path:
             return
 
         output_path = Path(save_path)
-        self._save_image_matrix(self.last_compressed_image, output_path)
+        try:
+            self._save_image_matrix(self.last_compressed_image, output_path)
+        except ValueError as error:
+            messagebox.showerror("Error", str(error))
+            return
         self._show_stats(
             self.last_original_path,
             self.last_matrix_shape,
@@ -521,7 +520,7 @@ class SVDCompressorGUI:
             self.last_mse,
             output_path,
         )
-        self.status_var.set(f"Citra hasil SVD berhasil disimpan: {output_path.name}")
+        self.status_var.set(f"Gambar hasil SVD berhasil disimpan: {output_path.name}")
 
     def _save_compressed_k(self, k: int) -> None:
         image_matrix = self.compressed_images_by_k.get(k)
@@ -529,42 +528,90 @@ class SVDCompressorGUI:
             messagebox.showerror("Error", f"Hasil SVD k={k} tidak ditemukan.")
             return
 
+        defaultextension, initialfile, filetypes = self._save_dialog_options(image_matrix, k)
         save_path = filedialog.asksaveasfilename(
-            title=f"Simpan citra hasil SVD k={k}",
-            defaultextension=".jpg",
-            initialfile=f"citra_satelit_svd_k{k}.jpg",
-            filetypes=[
-                ("JPEG", "*.jpg"),
-                ("JPEG", "*.jpeg"),
-                ("PNG", "*.png"),
-                ("TIFF", "*.tif"),
-                ("TIFF", "*.tiff"),
-            ],
+            title=f"Simpan gambar hasil SVD k={k}",
+            defaultextension=defaultextension,
+            initialfile=initialfile,
+            filetypes=filetypes,
         )
         if not save_path:
             return
 
         output_path = Path(save_path)
-        self._save_image_matrix(image_matrix, output_path)
-        self.status_var.set(f"Citra hasil SVD k={k} berhasil disimpan: {output_path.name}")
+        try:
+            self._save_image_matrix(image_matrix, output_path)
+        except ValueError as error:
+            messagebox.showerror("Error", str(error))
+            return
+        self.status_var.set(f"Gambar hasil SVD k={k} berhasil disimpan: {output_path.name}")
+
+    def _save_dialog_options(self, image_matrix: np.ndarray, k: int) -> tuple[str, str, list[tuple[str, str]]]:
+        if self._has_alpha_channel(image_matrix):
+            return (
+                ".webp",
+                f"gambar_game_svd_k{k}.webp",
+                [
+                    ("WEBP", "*.webp"),
+                    ("PNG", "*.png"),
+                    ("TIFF", "*.tif"),
+                    ("TIFF", "*.tiff"),
+                ],
+            )
+
+        return (
+            ".jpg",
+            f"gambar_game_svd_k{k}.jpg",
+            [
+                ("JPEG", "*.jpg"),
+                ("JPEG", "*.jpeg"),
+                ("PNG", "*.png"),
+                ("WEBP", "*.webp"),
+                ("TIFF", "*.tif"),
+                ("TIFF", "*.tiff"),
+            ],
+        )
+
+    def _has_alpha_channel(self, image_matrix: np.ndarray) -> bool:
+        return image_matrix.ndim == 3 and image_matrix.shape[2] == 4
 
     def _save_image_matrix(self, image_matrix: np.ndarray, output_path: Path) -> None:
         output_image = Image.fromarray(image_matrix.astype(np.uint8))
         if output_path.suffix.lower() in {".jpg", ".jpeg"}:
+            if self._has_alpha_channel(image_matrix):
+                raise ValueError("Gambar RGBA memiliki transparansi, jadi simpan sebagai PNG, WEBP, atau TIFF.")
             if output_image.mode != "RGB":
                 output_image = output_image.convert("RGB")
             output_image.save(output_path, quality=85, optimize=True)
+        elif output_path.suffix.lower() == ".webp":
+            self._save_webp(output_image, output_path)
+        elif output_path.suffix.lower() == ".png":
+            self._save_optimized_png(output_image, output_path)
         else:
             output_image.save(output_path)
+
+    def _save_webp(self, image: Image.Image, output_path: Path | BytesIO) -> None:
+        if image.mode not in {"RGB", "RGBA"}:
+            image = image.convert("RGB")
+        image.save(output_path, format="WEBP", quality=85, method=6)
+
+    def _save_optimized_png(self, image: Image.Image, output_path: Path | BytesIO) -> None:
+        image.save(output_path, format="PNG", optimize=True, compress_level=9)
+
+    def _thumbnail_for_preview(self, image: Image.Image, max_dimension: int = PREVIEW_MAX_DIMENSION) -> Image.Image:
+        preview = image.copy()
+        preview.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+        return preview
 
     def _show_original_preview(self) -> None:
         if self.image_path is None:
             return
 
-        mode = "RGB" if self.color_mode_var.get() == "RGB" else "L"
+        color_mode = self.color_mode_var.get()
+        mode = color_mode if color_mode in {"RGB", "RGBA"} else "L"
         image = Image.open(self.image_path).convert(mode)
-        self.original_pil = image
-        self.original_preview.set_image(image)
+        self.original_pil = self._thumbnail_for_preview(image)
+        self.original_preview.set_image(self.original_pil)
         self.compressed_pil = None
         self.compressed_images_by_k = {}
         self._clear_result_previews()
@@ -587,8 +634,9 @@ class SVDCompressorGUI:
         show_actions = len(compressed_images) > 1
         for index, (k, image_matrix) in enumerate(compressed_images.items()):
             image = Image.fromarray(image_matrix.astype(np.uint8))
+            preview_image = self._thumbnail_for_preview(image)
             if k == self.last_compressed_k:
-                self.compressed_pil = image
+                self.compressed_pil = preview_image.copy()
 
             _, _, ratio = storage_stats(self.last_matrix_shape, k)
             item = ttk.Frame(self.result_frame, style="Panel.TFrame", padding=8)
@@ -603,7 +651,7 @@ class SVDCompressorGUI:
                 ttk.Button(
                     header,
                     text="Lihat",
-                    command=lambda img=image.copy(), kk=k: self._open_image_fullscreen(img, f"SVD k={kk}"),
+                    command=lambda img=preview_image.copy(), kk=k: self._open_image_fullscreen(img, f"SVD k={kk}"),
                 ).pack(side="right", padx=(4, 0))
                 ttk.Button(header, text="Simpan", command=lambda kk=k: self._save_compressed_k(kk)).pack(side="right")
 
@@ -616,7 +664,7 @@ class SVDCompressorGUI:
             preview = ImagePreview(item, placeholder_text="")
             preview.pack(fill="both", expand=True, pady=(5, 0))
             preview.configure(height=190)
-            preview.set_image(image)
+            preview.set_image(preview_image)
             self.result_widgets.append(item)
 
     def _result_summary_text(
@@ -627,9 +675,15 @@ class SVDCompressorGUI:
         show_file_size: bool,
     ) -> str:
         if show_file_size:
+            size_label = "Ukuran WEBP" if self._has_alpha_channel(image_matrix) else "Ukuran JPG"
+            estimated_size = (
+                self._estimate_webp_size(image_matrix)
+                if self._has_alpha_channel(image_matrix)
+                else self._estimate_jpg_size(image_matrix)
+            )
             return (
                 f"Rasio {ratio:.1f}% | MSE {mse:.2f} | "
-                f"Ukuran JPG {self._estimate_jpg_size(image_matrix)}"
+                f"{size_label} {estimated_size}"
             )
 
         rows, cols = self.last_matrix_shape[:2]
@@ -643,9 +697,21 @@ class SVDCompressorGUI:
         image.save(buffer, format="JPEG", quality=85, optimize=True)
         return format_file_size(buffer.tell())
 
+    def _estimate_png_size(self, image_matrix: np.ndarray) -> str:
+        buffer = BytesIO()
+        image = Image.fromarray(image_matrix.astype(np.uint8))
+        self._save_optimized_png(image, buffer)
+        return format_file_size(buffer.tell())
+
+    def _estimate_webp_size(self, image_matrix: np.ndarray) -> str:
+        buffer = BytesIO()
+        image = Image.fromarray(image_matrix.astype(np.uint8))
+        self._save_webp(image, buffer)
+        return format_file_size(buffer.tell())
+
     def _open_fullscreen(self, which: str) -> None:
         image = self.original_pil if which == "original" else self.compressed_pil
-        title = "Citra Satelit Asli" if which == "original" else "Hasil Pengolahan SVD"
+        title = "Gambar Game Asli" if which == "original" else "Hasil Pengolahan SVD"
         if image is None:
             return
         self._open_image_fullscreen(image, title)
@@ -692,6 +758,7 @@ class SVDCompressorGUI:
         process_time: float,
         mse: float | None,
         saved_path: Path | None = None,
+        estimated_output: tuple[int, str] | None = None,
     ) -> None:
         rows, cols = matrix_shape[:2]
         selected_k = k_values[-1]
@@ -709,6 +776,12 @@ class SVDCompressorGUI:
             compressed_size = saved_path.stat().st_size
             file_ratio = (compressed_size / original_size) * 100 if original_size else 0
             self.metric_vars["Ukuran Kompres"].set(f"{format_file_size(compressed_size)} ({file_ratio:.1f}%)")
+        elif estimated_output is not None:
+            estimated_size, format_name = estimated_output
+            file_ratio = (estimated_size / original_size) * 100 if original_size else 0
+            self.metric_vars["Ukuran Kompres"].set(
+                f"~{format_file_size(estimated_size)} {format_name} ({file_ratio:.1f}%)"
+            )
         else:
             self.metric_vars["Ukuran Kompres"].set("-")
 
@@ -716,13 +789,17 @@ class SVDCompressorGUI:
         for variable in self.metric_vars.values():
             variable.set("-")
 
-    def _update_input_hint(self, _event=None) -> None:
-        if self.unit_var.get() == "Persen":
-            self.k_var.set("25")
-            self.status_var.set("Mode persen aktif. Contoh input: 25 atau 10,25,50.")
-        else:
-            self.k_var.set("50")
-            self.status_var.set("Mode nilai k aktif. Contoh input: 50 atau 10,30,50.")
+    def _estimate_output_size(self, image_matrix: np.ndarray, original_path: Path | None = None) -> tuple[int, str]:
+        buffer = BytesIO()
+        image = Image.fromarray(image_matrix.astype(np.uint8))
+        if self._has_alpha_channel(image_matrix):
+            self._save_webp(image, buffer)
+            return buffer.tell(), "WEBP"
+
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        image.save(buffer, format="JPEG", quality=85, optimize=True)
+        return buffer.tell(), "JPG"
 
     def _on_color_mode_changed(self, _event=None) -> None:
         self.last_compressed_image = None
@@ -738,7 +815,7 @@ class SVDCompressorGUI:
         else:
             self._reset_metrics()
 
-        self.status_var.set(f"Kanal citra aktif: {self.color_mode_var.get()}.")
+        self.status_var.set(f"Kanal gambar aktif: {self.color_mode_var.get()}.")
 
 
 def run_gui() -> None:

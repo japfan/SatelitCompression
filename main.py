@@ -15,9 +15,11 @@ import numpy as np
 from PIL import Image, ImageTk, UnidentifiedImageError
 
 
-SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
-SUPPORTED_FORMAT_TEXT = ".jpg, .jpeg, .png, .tif, atau .tiff"
+SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp", ".bmp", ".tga"}
+SUPPORTED_FORMAT_TEXT = ".jpg, .jpeg, .png, .tif, .tiff, .webp, .bmp, atau .tga"
 OUTPUT_DIR = Path("output")
+RANDOMIZED_SVD_OVERSAMPLES = 16
+RANDOMIZED_SVD_POWER_ITERATIONS = 1
 
 
 def windows_prefers_dark_mode() -> bool:
@@ -36,9 +38,9 @@ def windows_prefers_dark_mode() -> bool:
 
 
 def read_image_path() -> Path:
-    image_path = Path(input("Masukkan path citra satelit: ").strip().strip('"'))
+    image_path = Path(input("Masukkan path gambar game: ").strip().strip('"'))
     if not image_path.exists():
-        raise FileNotFoundError("File citra tidak ditemukan. Periksa kembali nama file atau path citra.")
+        raise FileNotFoundError("File gambar tidak ditemukan. Periksa kembali nama file atau path gambar.")
     if image_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
         raise ValueError(f"Format file tidak valid. Gunakan file {SUPPORTED_FORMAT_TEXT}.")
     return image_path
@@ -50,24 +52,22 @@ def load_grayscale_matrix(image_path: Path) -> np.ndarray:
     except UnidentifiedImageError as exc:
         raise ValueError(f"Format file tidak valid. Gunakan file {SUPPORTED_FORMAT_TEXT}.") from exc
 
-    return np.array(image, dtype=float)
+    return np.array(image, dtype=np.float32)
 
 
 def load_image_matrix(image_path: Path, color_mode: str) -> np.ndarray:
     try:
-        if color_mode == "RGB":
-            image = Image.open(image_path).convert("RGB")
-        else:
-            image = Image.open(image_path).convert("L")
+        mode = color_mode if color_mode in {"RGB", "RGBA"} else "L"
+        image = Image.open(image_path).convert(mode)
     except UnidentifiedImageError as exc:
         raise ValueError(f"Format file tidak valid. Gunakan file {SUPPORTED_FORMAT_TEXT}.") from exc
 
-    return np.array(image, dtype=float)
+    return np.array(image, dtype=np.float32)
 
 
 def validate_image_path(image_path: Path) -> None:
     if not image_path.exists():
-        raise FileNotFoundError("File citra tidak ditemukan. Periksa kembali nama file atau path citra.")
+        raise FileNotFoundError("File gambar tidak ditemukan. Periksa kembali nama file atau path gambar.")
     if image_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
         raise ValueError(f"Format file tidak valid. Gunakan file {SUPPORTED_FORMAT_TEXT}.")
 
@@ -77,8 +77,7 @@ def parse_k_values(raw_value: str, max_k: int) -> list[int]:
         raise ValueError("Nilai k harus lebih dari 0.")
 
     k_values: list[int] = []
-    # Input dibuat fleksibel agar saat presentasi bisa memakai "10,30,50"
-    # atau format seperti list Python: "[10, 30, 50, 100, 200]".
+
     cleaned_value = raw_value.strip().strip("[]")
     for item in cleaned_value.split(","):
         item = item.strip()
@@ -91,11 +90,11 @@ def parse_k_values(raw_value: str, max_k: int) -> list[int]:
             raise ValueError("Nilai k harus berupa bilangan bulat.") from exc
 
         if k <= 0:
-            # Nilai tidak valid diabaikan agar batch beberapa k tetap bisa berjalan.
+
             print(f"Nilai k = {k} diabaikan karena harus lebih dari 0.")
             continue
         if k > max_k:
-            # Rank SVD tidak boleh melebihi min(m, n), jadi k disesuaikan.
+
             print(f"Nilai k = {k} melebihi batas. Disesuaikan menjadi {max_k}.")
             k = max_k
         k_values.append(k)
@@ -106,50 +105,77 @@ def parse_k_values(raw_value: str, max_k: int) -> list[int]:
     return k_values
 
 
-def parse_compression_values(raw_value: str, max_k: int, unit: str) -> list[int]:
-    if unit == "Persen":
-        if not raw_value.strip():
-            raise ValueError("Persen kompresi harus lebih dari 0.")
-
-        k_values = []
-        for item in raw_value.split(","):
-            try:
-                percentage = float(item.strip())
-            except ValueError as exc:
-                raise ValueError("Persen kompresi harus berupa angka.") from exc
-
-            if percentage <= 0:
-                raise ValueError("Persen kompresi harus lebih dari 0.")
-            if percentage > 100:
-                raise ValueError("Persen kompresi maksimal adalah 100.")
-
-            k_values.append(max(1, min(max_k, round((percentage / 100) * max_k))))
-        return k_values
-
-    return parse_k_values(raw_value, max_k)
-
-
 def read_k_values(max_k: int) -> list[int]:
     raw_value = input("Masukkan nilai k (contoh: 50 atau [10, 30, 50, 100, 200]): ").strip()
     return parse_k_values(raw_value, max_k)
 
 
 def compress_with_rank_k(u: np.ndarray, s: np.ndarray, vt: np.ndarray, k: int) -> np.ndarray:
-    reconstructed = u[:, :k] @ np.diag(s[:k]) @ vt[:k, :]
+    reconstructed = (u[:, :k] * s[:k]) @ vt[:k, :]
     return np.clip(reconstructed, 0, 255)
+
+
+def decompose_for_rank(channel: np.ndarray, target_k: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    rows, cols = channel.shape
+    max_rank = min(rows, cols)
+    target_k = min(target_k, max_rank)
+    sample_count = min(max_rank, target_k + RANDOMIZED_SVD_OVERSAMPLES)
+
+    if sample_count >= max_rank or max_rank < 256:
+        return np.linalg.svd(channel, full_matrices=False)
+
+    rng = np.random.default_rng(0)
+    omega = rng.standard_normal((cols, sample_count)).astype(np.float32)
+    sample = channel @ omega
+    for _ in range(RANDOMIZED_SVD_POWER_ITERATIONS):
+        sample = channel @ (channel.T @ sample)
+
+    q, _ = np.linalg.qr(sample, mode="reduced")
+    projected = q.T @ channel
+    u_projected, s, vt = np.linalg.svd(projected, full_matrices=False)
+    u = q @ u_projected
+    return u[:, :target_k], s[:target_k], vt[:target_k, :]
 
 
 def compress_matrix_with_rank_k(matrix: np.ndarray, k: int) -> np.ndarray:
     if matrix.ndim == 2:
-        u, s, vt = np.linalg.svd(matrix, full_matrices=False)
+        u, s, vt = decompose_for_rank(matrix, k)
         return compress_with_rank_k(u, s, vt, k)
 
     channels = []
-    for channel_index in range(matrix.shape[2]):
+    color_channels = 3 if matrix.shape[2] == 4 else matrix.shape[2]
+    for channel_index in range(color_channels):
         channel = matrix[:, :, channel_index]
-        u, s, vt = np.linalg.svd(channel, full_matrices=False)
+        u, s, vt = decompose_for_rank(channel, k)
         channels.append(compress_with_rank_k(u, s, vt, k))
+    if matrix.shape[2] == 4:
+        channels.append(matrix[:, :, 3])
     return np.stack(channels, axis=2)
+
+
+def compress_matrix_with_rank_values(matrix: np.ndarray, k_values: list[int]) -> dict[int, np.ndarray]:
+    target_k = max(k_values)
+    if matrix.ndim == 2:
+        u, s, vt = decompose_for_rank(matrix, target_k)
+        return {k: compress_with_rank_k(u, s, vt, k) for k in k_values}
+
+    decomposed_channels = []
+    color_channels = 3 if matrix.shape[2] == 4 else matrix.shape[2]
+    for channel_index in range(color_channels):
+        channel = matrix[:, :, channel_index]
+        decomposed_channels.append(decompose_for_rank(channel, target_k))
+
+    compressed_images = {}
+    for k in k_values:
+        channels = [
+            compress_with_rank_k(u, s, vt, k)
+            for u, s, vt in decomposed_channels
+        ]
+        if matrix.shape[2] == 4:
+            channels.append(matrix[:, :, 3])
+        compressed_images[k] = np.stack(channels, axis=2)
+
+    return compressed_images
 
 
 def storage_stats(matrix_shape: tuple[int, ...], k: int) -> tuple[int, int, float]:
@@ -163,14 +189,14 @@ def storage_stats(matrix_shape: tuple[int, ...], k: int) -> tuple[int, int, floa
 
 def mean_squared_error(original: np.ndarray, reconstructed: np.ndarray) -> float:
     # MSE mengukur rata-rata kuadrat selisih piksel asli dan hasil rekonstruksi.
-    # Semakin kecil MSE, hasil SVD semakin dekat dengan citra asli.
+    # Semakin kecil MSE, hasil SVD semakin dekat dengan gambar asli.
     return float(np.mean((original - reconstructed) ** 2))
 
 
 def print_stats(matrix_shape: tuple[int, int], compressed_images: dict[int, np.ndarray],
                 original: np.ndarray) -> None:
     rows, cols = matrix_shape
-    print(f"\nUkuran citra satelit: {rows} x {cols}")
+    print(f"\nUkuran gambar game: {rows} x {cols}")
 
     for k, image_matrix in compressed_images.items():
         original_data, compressed_data, stored_ratio = storage_stats(matrix_shape, k)
@@ -195,11 +221,21 @@ def save_compressed_images(images: dict[int, np.ndarray]) -> dict[int, Path]:
     OUTPUT_DIR.mkdir(exist_ok=True)
     output_paths = {}
     for k, image_matrix in images.items():
-        output_path = OUTPUT_DIR / f"citra_satelit_svd_k{k}.png"
-        Image.fromarray(image_matrix.astype(np.uint8)).save(output_path)
+        suffix = ".webp" if image_matrix.ndim == 3 and image_matrix.shape[2] == 4 else ".png"
+        output_path = OUTPUT_DIR / f"gambar_game_svd_k{k}{suffix}"
+        save_image(Image.fromarray(image_matrix.astype(np.uint8)), output_path)
         output_paths[k] = output_path
-        print(f"Citra satelit hasil kompresi disimpan: {output_path}")
+        print(f"Gambar game hasil kompresi disimpan: {output_path}")
     return output_paths
+
+
+def save_image(image: Image.Image, output_path: Path) -> None:
+    if output_path.suffix.lower() == ".webp":
+        if image.mode not in {"RGB", "RGBA"}:
+            image = image.convert("RGB")
+        image.save(output_path, format="WEBP", quality=85, method=6)
+    else:
+        image.save(output_path)
 
 
 def format_file_size(size_in_bytes: int) -> str:
@@ -226,10 +262,10 @@ def show_comparison(original: np.ndarray, compressed_images: dict[int, np.ndarra
 
     plt.figure(figsize=(5 * columns, 4 * rows))
 
-    # Subplot pertama selalu citra asli sebagai pembanding visual.
+    # Subplot pertama selalu gambar asli sebagai pembanding visual.
     plt.subplot(rows, columns, 1)
     plt.imshow(original, cmap="gray")
-    plt.title("Citra Satelit Asli")
+    plt.title("Gambar Game Asli")
     plt.axis("off")
 
     # Setiap nilai k ditampilkan dalam subplot sendiri lengkap dengan rasio dan MSE.
@@ -251,19 +287,12 @@ def main() -> None:
         matrix = load_grayscale_matrix(image_path)
 
         rows, cols = matrix.shape
-        print(f"Ukuran matriks citra satelit: {rows} x {cols}")
+        print(f"Ukuran matriks gambar game: {rows} x {cols}")
         k_values = read_k_values(min(rows, cols))
 
         print("\nMelakukan Singular Value Decomposition...")
         start_time = time.perf_counter()
-        u, s, vt = np.linalg.svd(matrix, full_matrices=False)
-
-        # Dictionary menjaga pasangan k dan citra hasil kompresi agar mudah
-        # dipakai untuk statistik teks, penyimpanan file, dan subplot matplotlib.
-        compressed_images = {
-            k: compress_with_rank_k(u, s, vt, k)
-            for k in k_values
-        }
+        compressed_images = compress_matrix_with_rank_values(matrix, k_values)
         process_time = time.perf_counter() - start_time
 
         print_stats(matrix.shape, compressed_images, matrix)
